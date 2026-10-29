@@ -1,0 +1,152 @@
+#!/bin/zsh
+# cachewatch: keeps an eye on the hidden developer caches that quietly fill up your Mac.
+# https://github.com/My-CMDhub/cachewatch · MIT licence
+#
+#   cachewatch            table of caches, biggest first
+#   cachewatch --clean    clear caches one at a time, asking y/N for each
+#   cachewatch --notify   the weekly check (run by launchd): notify after GROW_GB of growth
+#   cachewatch --bar      menu-bar output for SwiftBar
+#   cachewatch --help | --version
+
+VERSION=1.0.0
+HERE=${0:A:h}  # folder this script lives in; the two helpers sit next to it
+
+# Defaults. Override any of them in ~/.config/cachewatch/config.zsh
+GROW_GB=10                                                  # alert after this much growth
+PROJECTS=($HOME/Developer $HOME/Projects $HOME/code $HOME/src)  # where node_modules/.venv live
+EXTRA_ITEMS=()                                              # your own "Label|/folder|clean command"
+CONFIG=$HOME/.config/cachewatch/config.zsh
+[[ -r $CONFIG ]] && source $CONFIG
+
+LOG=$HOME/Library/Logs/cachewatch.log
+BASE=$HOME/Library/Logs/cachewatch.baseline  # total KB after the last sweep
+
+# Label | folder | clean command. No command = "look only": you decide by hand.
+ITEMS=(
+  "uv (Python)|$HOME/.cache/uv|uv cache clean"
+  "pip|$HOME/Library/Caches/pip|pip3 cache purge"
+  "npm|$HOME/.npm|npm cache clean --force"
+  "pnpm store|$HOME/Library/pnpm|pnpm store prune"
+  "Yarn|$HOME/Library/Caches/Yarn|yarn cache clean"
+  "Bun|$HOME/.bun/install/cache|bun pm cache rm"
+  "Homebrew|$HOME/Library/Caches/Homebrew|brew cleanup"
+  "CocoaPods|$HOME/Library/Caches/CocoaPods|pod cache clean --all"
+  "Go build|$HOME/Library/Caches/go-build|go clean -cache"
+  "Xcode DerivedData|$HOME/Library/Developer/Xcode/DerivedData|mv ~/Library/Developer/Xcode/DerivedData ~/.Trash/DerivedData-\$(date +%s)"
+  "Simulators|$HOME/Library/Developer/CoreSimulator/Devices|xcrun simctl delete unavailable"
+  "iOS DeviceSupport|$HOME/Library/Developer/Xcode/iOS DeviceSupport|"
+  "Xcode Archives|$HOME/Library/Developer/Xcode/Archives|"
+  "Gradle|$HOME/.gradle/caches|"
+  "Cargo registry|$HOME/.cargo/registry|"
+  "Playwright browsers|$HOME/Library/Caches/ms-playwright|"
+  "Hugging Face models|$HOME/.cache/huggingface|"
+  "Ollama models|$HOME/.ollama/models|"
+  "LM Studio models|$HOME/.lmstudio/models|"
+  "Docker disk|$HOME/Library/Containers/com.docker.docker|"
+  $EXTRA_ITEMS
+)
+
+case $1 in
+-h|--help|help) sed -n '2,9p' $0 | cut -c3-; exit ;;
+-v|--version) print "cachewatch $VERSION"; exit ;;
+esac
+
+kb() { [[ -e $1 ]] && du -sk "$1" 2>/dev/null | cut -f1 || print 0; }
+gb() { printf "%.1f" $(( $1 / 1048576.0 )); }
+has() { (( $+commands[${1%% *}] )); }  # is the command's tool installed?
+
+total=0; biggest=""; big_kb=0; rows=()
+for item in $ITEMS; do
+  IFS='|' read -r label dir cmd <<< "$item"
+  k=$(kb "$dir"); (( k == 0 )) && continue
+  total=$(( total + k ))
+  [[ -n $cmd ]] && (( k > big_kb )) && { big_kb=$k; biggest=$label; }
+  rows+=("$k|$label|$cmd|$dir")
+done
+
+[[ -s $BASE ]] || { mkdir -p ${BASE:h}; print $total > $BASE; }  # first run: growth counts from now
+base=$(<$BASE)
+grown=$(( total > base ? total - base : 0 ))
+
+projects() {  # "MB<TAB>folder" for rebuildable project folders of 200 MB and up, biggest first
+  local roots=(${^PROJECTS}(N/))
+  (( $#roots )) || return
+  find $roots -maxdepth 5 -type d \( -name node_modules -o -name .venv -o -name .build \) -prune -print0 2>/dev/null \
+    | xargs -0 du -sm 2>/dev/null | awk '$1 >= 200' | sort -rn
+}
+
+case $1 in
+--notify)
+  (( total < base )) && base=$total  # something shrank by hand: lower the bar
+  print $base > $BASE
+  msg="Caches grew $(gb $grown) GB since your last sweep. Biggest you can clear: $biggest, $(gb $big_kb) GB"
+  print "$(date '+%F %R')  $msg" >> $LOG
+  if (( grown >= GROW_GB * 1048576 )); then
+    if open -Ra SwiftBar 2>/dev/null; then  # a real app with notification permission
+      open -g "swiftbar://notify?plugin=cachewatch&title=Time%20for%20a%20cache%20sweep&body=${msg// /%20}"
+    else
+      osascript -e "display notification \"$msg\" with title \"Time for a cache sweep\""
+    fi
+  fi ;;
+
+--clean)
+  offered=0
+  for row in $rows; do
+    IFS='|' read -r k label cmd dir <<< "$row"
+    [[ -z $cmd ]] || (( k < 102400 )) || ! has $cmd && continue  # look-only, under 100 MB, or tool missing
+    offered=1
+    read -q "?Clear $label ($(gb $k) GB) with: $cmd ? [y/N] " && { print; eval "$cmd"; } || print
+  done
+  (( offered )) || print "Nothing over 100 MB to clear. You're tidy."
+  rm -f $BASE  # the ring starts counting fresh growth from here
+  print; df -h / | awk 'NR==2 {print "Free space now: " $4}' ;;
+
+--bar)  # SwiftBar menu: ring icon, then the dropdown. Clicking a row shows it in Finder.
+  frac=$(( grown / (GROW_GB * 1048576.0) )); centre=$(( (big_kb + 524288) / 1048576 ))
+  if (( frac >= 1 )); then print " | image=$($HERE/cachering 1 $centre orange)"
+  else print " | templateImage=$($HERE/cachering $frac $centre)"; fi
+  print -- "---"
+  print "Grown $(gb $grown) of $GROW_GB GB since your last sweep"
+  [[ -n $biggest ]] && print "Biggest you can clear: $biggest, $(gb $big_kb) GB"
+  print "Everything tracked: $(gb $total) GB"
+  print -- "---"
+  for row in $rows; do
+    IFS='|' read -r k label cmd dir <<< "$row"
+    (( k < 51200 )) && continue  # hide anything under 50 MB
+    printf "%5s GB  %s%s | font=Menlo size=12 %s bash=/usr/bin/open param1=-R param2=\"%s\" terminal=false\n" \
+      "$(gb $k)" "$label" "$([[ -z $cmd ]] && print '  (look only)')" "$([[ -z $cmd ]] && print 'color=gray')" "$dir"
+  done | sort -rn
+  print -- "---"
+  print "Project folders over 200 MB"
+  projects | while IFS=$'\t' read -r mb dir; do
+    printf -- "--%5.1f GB  %s | font=Menlo size=12 bash=/usr/bin/open param1=-R param2=\"%s\" terminal=false\n" \
+      $(( mb / 1024.0 )) "${dir/#$HOME/~}" "$dir"
+  done
+  manifests=($HOME/.ollama/models/manifests/*/*/*/*(N.))  # registry/namespace/model/tag
+  if (( $#manifests )); then
+    print "Ollama models (remove one: ollama rm NAME)"
+    for m in $manifests; do
+      printf -- "--%5.1f GB  %s:%s | font=Menlo size=12\n" \
+        $(( $(grep -o '"size":[0-9]*' $m | awk -F: '{s+=$2} END {print s+0}') / 1073741824.0 )) ${m:h:t} ${m:t}
+    done
+  fi
+  print -- "---"
+  print "Clean now… | bash=$HERE/cachewatch param1=--clean terminal=true"
+  print "How to use | bash=$HERE/cacheguide param1=$GROW_GB terminal=false"
+  print "History | bash=/usr/bin/open param1=-e param2=$LOG terminal=false"
+  print "Refresh | refresh=true" ;;
+
+*)
+  printf "%8s  %s\n" GB Cache
+  for row in $rows; do
+    IFS='|' read -r k label cmd <<< "$row"
+    printf "%8s  %s%s\n" "$(gb $k)" "$label" "$([[ -z $cmd ]] && print '  (look only)')"
+  done | sort -rn
+  printf "%8s  total. Grown %s of %s GB since your last sweep.\n\n" "$(gb $total)" "$(gb $grown)" "$GROW_GB"
+  if [[ -n $(projects) ]]; then
+    print "Project folders over 200 MB (rebuildable, never cleaned for you):"
+    projects | awk -F'\t' '{printf "%7.1f  %s\n", $1/1024, $2}'
+    print
+  fi
+  print "Clear caches: cachewatch --clean    History: $LOG" ;;
+esac
