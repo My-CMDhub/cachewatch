@@ -52,6 +52,8 @@ It takes about a minute, and the ring shows up in your menu bar when it's done.
 
 ## Using it
 
+<img src="assets/menu-icon.png" alt="The ring in the menu bar, with a 4 in the middle" width="200">
+
 | The ring | What it means | What to do |
 |---|---|---|
 | Grey, nearly empty | Caches have barely grown since your last clean-up | Nothing |
