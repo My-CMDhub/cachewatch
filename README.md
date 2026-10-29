@@ -2,22 +2,18 @@
 
 **A small ring in your Mac's menu bar that tells you when the hidden developer caches have grown, and clears them safely when you say so.**
 
-<p align="center">
-  <img src="assets/menu-dropdown.png" alt="The cachewatch menu: a ring in the menu bar and a list of caches with their sizes" width="430">
-  &nbsp;&nbsp;
-  <img src="assets/guide-panel.png" alt="The How to use panel, a dark floating window explaining the ring" width="360">
-</p>
+![The cachewatch menu: a ring in the menu bar and a list of caches with their sizes](assets/menu-dropdown.png)    ![The How to use panel, a dark floating window explaining the ring](assets/guide-panel.png)
 
 Every `npm install`, `uv sync`, Xcode build and model download leaves a copy behind so the next one is faster.
 Nobody ever clears them, so they grow quietly forever. I found **61 GB** in a single Python cache I didn't know
 existed. cachewatch keeps an eye on those folders for you.
 
 - **The ring** fills up as your caches grow and turns **orange** once they've grown 10 GB since your last clean-up.
-  The number in the middle is how many GB your biggest clearable cache is holding.
+The number in the middle is how many GB your biggest clearable cache is holding.
 - **Click it** to see every cache with its size, your biggest project folders, and your local AI models.
-  Click any row to see it in Finder.
+Click any row to see it in Finder.
 - **Clean now…** walks through each cache in Terminal and asks **y/N** for every one, using that tool's own
-  clean-up command (`uv cache clean`, `npm cache clean`, `brew cleanup` …).
+clean-up command (`uv cache clean`, `npm cache clean`, `brew cleanup` …).
 - **A weekly nudge** on Sunday mornings, only when there's actually something worth clearing.
 - **How to use** opens a short guide right from the menu, so you never have to come back here.
 
@@ -52,7 +48,7 @@ It takes about a minute, and the ring shows up in your menu bar when it's done.
 
 ## Using it
 
-<img src="assets/menu-icon.png" alt="The ring in the menu bar, with a 4 in the middle" width="200">
+![The ring in the menu bar, with a 4 in the middle](assets/menu-icon.png)
 
 | The ring | What it means | What to do |
 |---|---|---|
@@ -115,7 +111,7 @@ and `cacheguide` is the floating guide window. About 400 lines in all, with no d
 command, and the tool downloads anything it needs again later. Anything where a wrong guess could cost real data
 (Docker volumes, models, your projects) is look only.
 
-**Why a growth alert instead of a size limit?** Some big folders are there on purpose (Docker, a simulator you use).
+**Why a growth alert instead of a size limit?** Some big folders are there on purpose (Docker, a simulator use).  
 An alarm on total size would go off every week until you ignored it. Growth is what sneaks up on you.
 
 **Does it slow my Mac down?** Measuring takes a few seconds, up to ~30 s if Docker's disk is large, and only runs
