@@ -88,8 +88,10 @@ if (( ! swiftbar )); then
 fi
 if (( swiftbar )); then
   defaults read com.ameba.SwiftBar PluginDirectory >/dev/null 2>&1 || defaults write com.ameba.SwiftBar PluginDirectory $PLUGINS
-  open -a SwiftBar
-  open -g "swiftbar://refreshplugin?name=cachewatch"
+  # A just-installed app isn't in macOS's app index yet, so fall back to its path.
+  open -a SwiftBar 2>/dev/null || open /Applications/SwiftBar.app 2>/dev/null || open ~/Applications/SwiftBar.app 2>/dev/null ||
+    print "\n! Couldn't start SwiftBar. Open it from Applications and the ring will appear."
+  open -g "swiftbar://refreshplugin?name=cachewatch" 2>/dev/null || true  # a fresh launch loads plugins anyway
 fi
 
 print "
