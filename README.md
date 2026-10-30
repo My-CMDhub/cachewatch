@@ -26,6 +26,9 @@ git clone https://github.com/My-CMDhub/cachewatch.git && cd cachewatch && ./inst
 The installer shows you exactly what it's about to do and waits for a **y** before touching anything.
 It takes about a minute, and the ring shows up in your menu bar when it's done.
 
+**One more click so it survives a restart:** click the ring → **SwiftBar** → **Preferences…** → tick **Launch at Login**.
+(Only SwiftBar can switch that on, so the installer can't do it for you.)
+
 ### What the installer does, at a glance
 
 | Step | Where | Why |

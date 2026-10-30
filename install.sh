@@ -97,7 +97,10 @@ fi
 print "
 ✓ Done. Look for the ring in your menu bar (it can take ~30 seconds the first time).
   Click it, then How to use, for a 2-minute tour.
-  Allow notifications if macOS asks; that's how the weekly reminder reaches you."
+  Allow notifications if macOS asks; that's how the weekly reminder reaches you.
+
+  One click so the ring comes back after a restart:
+  click the ring → SwiftBar → Preferences… → tick Launch at Login."
 [[ :$PATH: == *:$BIN:* ]] || print "
   To use cachewatch in Terminal too, add ~/.local/bin to your PATH:
     echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.zshrc"
