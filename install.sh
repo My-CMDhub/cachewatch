@@ -29,7 +29,7 @@ cachewatch $(sed -n 's/^VERSION=//p' bin/cachewatch) will:
 
   1. Build 2 small helpers from the Swift source in src/ (about 30 seconds)
   2. Put 3 files in ~/.local/bin: cachewatch, cachering, cacheguide
-  3. Add its menu-bar plugin to ${PLUGINS/#$HOME/~}
+  3. Add its menu-bar plugin to ${PLUGINS/#$HOME/~} (checks every 5 minutes, very lightly)
   4. Schedule a weekly check, Sundays at 10:00 (~/Library/LaunchAgents/$LABEL.plist)
   5. Create your settings file ~/.config/cachewatch/config.zsh (yours is kept if it exists)"
 (( swiftbar )) || { (( brew )) && print "  6. Install SwiftBar, the free open-source app that shows the ring (brew install --cask swiftbar)"; }
@@ -49,8 +49,9 @@ print "→ Settings"
 [[ -e $CONFIG ]] && print "  kept your existing $CONFIG" || cp config.example.zsh $CONFIG
 
 print "→ Menu-bar plugin"
-existing=($PLUGINS/cachewatch.*.sh(N))  # keep the refresh interval if you renamed it
-plugin=${existing[1]:-$PLUGINS/cachewatch.6h.sh}
+# Every 5 minutes: the background check is cheap; cache sizes keep their own SIZES_EVERY_H timer.
+rm -f $PLUGINS/cachewatch.*.sh(N)  # replaces older 6h/24h plugin files
+plugin=$PLUGINS/cachewatch.5m.sh
 cat > $plugin <<EOF
 #!/bin/zsh
 # <xbar.title>cachewatch</xbar.title>

@@ -85,7 +85,36 @@ struct RingTab: View {
     Item(title: "Why count growth, not total size?",
          why: "Some big folders are there on purpose: Docker's disk, your phone's debug files, a simulator you use. An alarm on total size would go off every week until you learned to ignore it. Growth is the thing that sneaks up on you.")
     Item(title: "When it updates",
-         why: "The ring refreshes on its own (every 6 hours unless you changed it). **Refresh** in the menu does it now, which takes about 30 seconds. A weekly check on Sundays at 10:00 sends the notification.")
+         why: "The menu checks what's running every 5 minutes, which is quick and cheap. Cache sizes are slower to measure (about 30 seconds), so they're re-measured every 6 hours, or straight away with **Re-measure sizes**. A weekly check on Sundays at 10:00 sends the cache notification.")
+  }
+}
+
+struct BackgroundTab: View {
+  var body: some View {
+    Text("Developer tools left running can drain your battery, slow your Mac down and even hold your speakers open. cachewatch tells you **once** when it spots one, and never stops anything by itself.")
+      .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+    Card {
+      HStack(spacing: 14) {
+        ZStack(alignment: .topTrailing) {
+          RingGlyph(frac: 0.35, tint: .primary, label: "4")
+          Text("⚠︎").font(.caption.bold()).foregroundStyle(.orange).offset(x: 10, y: -6)
+        }
+        VStack(alignment: .leading, spacing: 3) {
+          Text("A ⚠︎ beside the ring, plus one notification").font(.headline)
+          Text("Something heavy is running in the background. Click the ring: it's listed at the top in orange.")
+            .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        }
+      }
+    }
+    Item(title: "What it looks for",
+         why: "**A simulator** left on for 30 minutes or more. **Docker Desktop** left on that long. **Any of your own programs** stuck above 50% CPU on two checks in a row. The app you're using right now is never flagged.")
+    Item(title: "Deciding what to do",
+         why: "Hover the item: it says what the program is and whether quitting it is safe. Then pick the quick fix (shut down the simulator, quit Docker, quit the program) or simply leave it. If you're using it, ignore the warning; you won't be notified about it again.")
+    Item(title: "Is the quick fix safe?",
+         why: "It only ever acts on the exact process it showed you. If that program has already closed and something else took its place, the fix does nothing.")
+    Item(title: "Tune or turn it off",
+         why: "In your settings file: `CPU_HOG` (the % line), `SIM_MIN` (minutes), `BG_IGNORE` (names never to flag) or `BG_CHECK=0` to switch it off.",
+         how: "open ~/.config/cachewatch/config.zsh")
   }
 }
 
@@ -156,14 +185,14 @@ struct DontsTab: View {
 
 struct GuideView: View {
   @State private var tab = 0
-  private let tabs = ["The ring", "Sweep", "By hand", "Don'ts"]
+  private let tabs = ["Ring", "Sweep", "Background", "By hand", "Don'ts"]
   var body: some View {
     VStack(alignment: .leading, spacing: 14) {
       HStack(spacing: 12) {
         RingGlyph(frac: 0.35, tint: .white, label: "4", size: 36)
         VStack(alignment: .leading, spacing: 2) {
           Text("cachewatch").font(.title2.weight(.semibold))
-          Text("Keeps your hidden developer caches in check").font(.callout).foregroundStyle(.secondary)
+          Text("Keeps your caches and background tools in check").font(.callout).foregroundStyle(.secondary)
         }
       }
       Picker("", selection: $tab) { ForEach(tabs.indices, id: \.self) { Text(tabs[$0]).tag($0) } }
@@ -173,7 +202,8 @@ struct GuideView: View {
           switch tab {
           case 0: RingTab()
           case 1: SweepTab()
-          case 2: ByHandTab()
+          case 2: BackgroundTab()
+          case 3: ByHandTab()
           default: DontsTab()
           }
         }

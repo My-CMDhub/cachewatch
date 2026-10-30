@@ -1,6 +1,6 @@
 # cachewatch
 
-**A small ring in your Mac's menu bar that tells you when the hidden developer caches have grown, and clears them safely when you say so.**
+**A small ring in your Mac's menu bar that tells you when the hidden developer caches have grown, and when a developer tool has been left running in the background, then helps you fix it safely when you say so.**
 
 ![The cachewatch menu: a ring in the menu bar and a list of caches with their sizes](assets/menu-dropdown.png)    ![The How to use panel, a dark floating window explaining the ring](assets/guide-panel.png)
 
@@ -15,6 +15,8 @@ Click any row to see it in Finder.
 - **Clean now…** walks through each cache in Terminal and asks **y/N** for every one, using that tool's own
 clean-up command (`uv cache clean`, `npm cache clean`, `brew cleanup` …).
 - **A weekly nudge** on Sunday mornings, only when there's actually something worth clearing.
+- **A background check** that notices a simulator, Docker Desktop or a stuck tool left running and draining your
+battery. It notifies you **once**, explains what it is and whether it's safe to quit, and offers a one-click fix.
 - **How to use** opens a short guide right from the menu, so you never have to come back here.
 
 ## Install
@@ -35,7 +37,7 @@ It takes about a minute, and the ring shows up in your menu bar when it's done.
 |---|---|---|
 | Builds 2 small helpers from the Swift source in `src/` | `~/.local/bin/cachering`, `cacheguide` | One draws the ring picture, the other is the guide window. Built on your Mac so you can read every line first. |
 | Copies the main script | `~/.local/bin/cachewatch` | Measures the cache folders and does the clean-up when you ask. |
-| Adds a menu-bar plugin | `~/.config/swiftbar/cachewatch.6h.sh` | [SwiftBar](https://swiftbar.app) shows it as the ring and refreshes it every 6 hours. |
+| Adds a menu-bar plugin | `~/.config/swiftbar/cachewatch.5m.sh` | [SwiftBar](https://swiftbar.app) shows it as the ring. It glances at running programs every 5 minutes (cheap) and re-measures cache sizes every 6 hours (the slow part). |
 | Schedules a weekly check | `~/Library/LaunchAgents/io.github.my-cmdhub.cachewatch.plist` | Runs on Sundays at 10:00 and notifies you only if your caches grew past your limit. |
 | Creates a settings file | `~/.config/cachewatch/config.zsh` | Your alert size and project folders. Never overwritten on update. |
 | Installs SwiftBar, *only if it's missing and you have Homebrew* | `/Applications/SwiftBar.app` | The free, open-source app that puts the ring in your menu bar. |
@@ -62,6 +64,20 @@ It takes about a minute, and the ring shows up in your menu bar when it's done.
 When you clean up, it's fine to say **yes** to the download caches (uv, pip, npm, pnpm, Yarn, Bun, Homebrew, CocoaPods, Go). The worst case is one install later takes a little longer.
 Say **no** to Xcode DerivedData only while Xcode is in the middle of a build. After a clean-up, the ring empties and starts counting again.
 
+### Background check
+
+A **⚠︎ beside the ring** means something heavy has been left running. You get one notification about it, and it's
+listed at the top of the menu in orange, with what it is, whether quitting it is safe, and a quick fix.
+
+| It flags | When | Quick fix |
+|---|---|---|
+| An iOS simulator | On for 30 minutes or more. A forgotten one can hold your speakers open and stop your Mac from idling. | Shut it down (it boots again in seconds) |
+| Docker Desktop | On for 30 minutes or more. Its Linux VM holds gigabytes of memory. | Quit Docker Desktop (running containers stop) |
+| Any of your own programs | Above 50% CPU on two checks in a row. The app you're using right now is never flagged. | Quit it, after checking what it is |
+
+Nothing is ever stopped for you. If you're using it, just ignore it; you won't hear about it again.
+The quick fix only acts on the exact process it showed you, so a menu that's a few minutes old can't hit the wrong program.
+
 ## What it watches
 
 | Cleared for you (after a y) | Look only (you decide) |
@@ -80,15 +96,19 @@ PROJECTS=($HOME/Developer $HOME/Projects)    # where your node_modules / .venv l
 EXTRA_ITEMS=(                                # watch anything else: "Label|/folder|clean command"
   "Android system images|$HOME/Library/Android/sdk/system-images|"
 )
+SIZES_EVERY_H=6     # re-measure cache sizes this often
+BG_CHECK=1          # 0 turns the background check off
+CPU_HOG=50          # flag your own programs above this % CPU on two checks in a row
+SIM_MIN=30          # flag a simulator or Docker Desktop left on longer than this (minutes)
+BG_IGNORE=(node)    # program names never to flag
 ```
-
-Want the ring to refresh more or less often? Rename the plugin file. `cachewatch.1h.sh` refreshes every hour and `cachewatch.24h.sh` once a day. The installer keeps your choice when you update.
 
 ## From Terminal
 
 ```bash
 cachewatch            # table of caches, biggest first
 cachewatch --clean    # the clean-up, one y/N at a time
+cachewatch --bg       # what's running in the background right now
 cachewatch --help
 ```
 
@@ -106,7 +126,7 @@ Uninstalling leaves your caches and SwiftBar alone.
 Everything talks in plain text. The script measures folders with `du` and prints its menu as lines of text.
 SwiftBar turns those lines into the menu, and macOS's own scheduler (`launchd`) runs the weekly check.
 Only two parts are native Swift, because only they draw pixels: `cachering` draws the ring and hands it over as text,
-and `cacheguide` is the floating guide window. About 400 lines in all, with no dependencies beyond SwiftBar.
+and `cacheguide` is the floating guide window. About 600 lines in all, with no dependencies beyond SwiftBar.
 
 ## FAQ
 
@@ -114,11 +134,11 @@ and `cacheguide` is the floating guide window. About 400 lines in all, with no d
 command, and the tool downloads anything it needs again later. Anything where a wrong guess could cost real data
 (Docker volumes, models, your projects) is look only.
 
-**Why a growth alert instead of a size limit?** Some big folders are there on purpose (Docker, a simulator use).  
+**Why a growth alert instead of a size limit?** Some big folders are there on purpose (Docker, a simulator you use).
 An alarm on total size would go off every week until you ignored it. Growth is what sneaks up on you.
 
-**Does it slow my Mac down?** Measuring takes a few seconds, up to ~30 s if Docker's disk is large, and only runs
-when the ring refreshes or on Sunday's check.
+**Does it slow my Mac down?** The 5-minute check only reads the process list, which takes a fraction of a second.
+Measuring cache sizes takes a few seconds, up to ~30 s if Docker's disk is large, and runs every 6 hours.
 
 **A cache I use isn't listed.** Add it to `EXTRA_ITEMS` in your settings, or open an issue or PR so everyone gets it.
 

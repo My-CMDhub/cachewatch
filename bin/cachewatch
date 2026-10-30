@@ -1,25 +1,34 @@
 #!/bin/zsh
-# cachewatch: keeps an eye on the hidden developer caches that quietly fill up your Mac.
+# cachewatch: keeps an eye on the hidden developer caches that quietly fill up your Mac,
+# and on developer tools left running in the background that drain the battery.
 # https://github.com/My-CMDhub/cachewatch · MIT licence
 #
 #   cachewatch            table of caches, biggest first
 #   cachewatch --clean    clear caches one at a time, asking y/N for each
+#   cachewatch --bg       what's running in the background right now
 #   cachewatch --notify   the weekly check (run by launchd): notify after GROW_GB of growth
 #   cachewatch --bar      menu-bar output for SwiftBar
 #   cachewatch --help | --version
 
-VERSION=1.0.0
+VERSION=1.1.0
 HERE=${0:A:h}  # folder this script lives in; the two helpers sit next to it
 
 # Defaults. Override any of them in ~/.config/cachewatch/config.zsh
 GROW_GB=10                                                  # alert after this much growth
 PROJECTS=($HOME/Developer $HOME/Projects $HOME/code $HOME/src)  # where node_modules/.venv live
 EXTRA_ITEMS=()                                              # your own "Label|/folder|clean command"
+SIZES_EVERY_H=6     # the menu re-measures cache sizes this often (slow: ~30 s of reading folders)
+BG_CHECK=1          # 0 turns the background check off
+CPU_HOG=50          # flag your own processes above this % CPU on two checks in a row…
+HOG_MIN=10          # …that have been running at least this many minutes
+SIM_MIN=30          # flag a simulator or Docker Desktop left on longer than this (minutes)
+BG_IGNORE=()        # process names never to flag, e.g. (node "Google Chrome Helper")
 CONFIG=$HOME/.config/cachewatch/config.zsh
 [[ -r $CONFIG ]] && source $CONFIG
 
 LOG=$HOME/Library/Logs/cachewatch.log
 BASE=$HOME/Library/Logs/cachewatch.baseline  # total KB after the last sweep
+STATE=$HOME/Library/Caches/cachewatch        # last measured sizes + background-check memory
 
 # Label | folder | clean command. No command = "look only": you decide by hand.
 ITEMS=(
@@ -46,50 +55,155 @@ ITEMS=(
   $EXTRA_ITEMS
 )
 
-case $1 in
--h|--help|help) sed -n '2,9p' $0 | cut -c3-; exit ;;
--v|--version) print "cachewatch $VERSION"; exit ;;
-esac
-
 kb() { [[ -e $1 ]] && du -sk "$1" 2>/dev/null | cut -f1 || print 0; }
 gb() { printf "%.1f" $(( $1 / 1048576.0 )); }
 has() { (( $+commands[${1%% *}] )); }  # is the command's tool installed?
-
-total=0; biggest=""; big_kb=0; rows=()
-for item in $ITEMS; do
-  IFS='|' read -r label dir cmd <<< "$item"
-  k=$(kb "$dir"); (( k == 0 )) && continue
-  total=$(( total + k ))
-  [[ -n $cmd ]] && (( k > big_kb )) && { big_kb=$k; biggest=$label; }
-  rows+=("$k|$label|$cmd|$dir")
-done
-
-[[ -s $BASE ]] || { mkdir -p ${BASE:h}; print $total > $BASE; }  # first run: growth counts from now
-base=$(<$BASE)
-grown=$(( total > base ? total - base : 0 ))
+mins() {  # ps elapsed time ([[dd-]hh:]mm:ss) -> whole minutes
+  local t=$1 d=0 h=0 m=0
+  [[ $t == *-* ]] && { d=${t%%-*}; t=${t#*-}; }
+  local p=(${(s.:.)t})
+  case $#p in 3) h=$p[1] m=$p[2] ;; 2) m=$p[1] ;; esac
+  print $(( d * 1440 + h * 60 + m ))
+}
+dur() { (( $1 >= 60 )) && print "$(( $1 / 60 )) h $(( $1 % 60 )) m" || print "$1 min"; }
+urlenc() { local s=${1//\%/%25}; s=${s// /%20}; s=${s//&/%26}; s=${s//\?/%3F}; print -r -- ${s//\#/%23}; }
+notify() {  # title, body
+  if open -Ra SwiftBar 2>/dev/null; then  # a real app with notification permission
+    open -g "swiftbar://notify?plugin=cachewatch&title=$(urlenc $1)&body=$(urlenc $2)"
+  else
+    osascript -e "display notification \"$2\" with title \"$1\""
+  fi
+}
 
 projects() {  # "MB<TAB>folder" for rebuildable project folders of 200 MB and up, biggest first
   local roots=(${^PROJECTS}(N/))
-  (( $#roots )) || return
+  (( $#roots )) || return 0
   find $roots -maxdepth 5 -type d \( -name node_modules -o -name .venv -o -name .build \) -prune -print0 2>/dev/null \
     | xargs -0 du -sm 2>/dev/null | awk '$1 >= 200' | sort -rn
 }
 
+measure() {  # sizes every folder (the slow part), then saves it for the menu
+  total=0; biggest=""; big_kb=0; rows=()
+  local item label dir cmd k
+  for item in $ITEMS; do
+    IFS='|' read -r label dir cmd <<< "$item"
+    k=$(kb "$dir"); (( k == 0 )) && continue
+    total=$(( total + k ))
+    [[ -n $cmd ]] && (( k > big_kb )) && { big_kb=$k; biggest=$label; }
+    rows+=("$k|$label|$cmd|$dir")
+  done
+  mkdir -p $STATE
+  print -rl -- $total "$big_kb|$biggest" $rows > $STATE/sizes
+  projects > $STATE/projects
+}
+load() {  # last saved sizes; measures again if they're older than SIZES_EVERY_H
+  local fresh=($STATE/sizes(N.mh-$SIZES_EVERY_H))
+  (( $#fresh )) || { measure; return; }
+  local l=("${(@f)$(<$STATE/sizes)}")
+  total=$l[1]; IFS='|' read -r big_kb biggest <<< "$l[2]"; rows=("${(@)l[3,-1]}")
+}
+growth() {
+  [[ -s $BASE ]] || { mkdir -p ${BASE:h}; print $total > $BASE; }  # first run: growth counts from now
+  base=$(<$BASE)
+  grown=$(( total > base ? total - base : 0 ))
+}
+
+about() {  # "what it is|is it safe to quit" for a process name
+  case $1 in
+    DeviceFS) print "Xcode's helper for browsing a connected iPhone's files.|Safe to quit: macOS starts it again when it's needed." ;;
+    SourceKitService|sourcekit-lsp) print "Xcode's code-completion indexer.|Safe to quit: Xcode starts it again." ;;
+    node|bun|deno) print "A JavaScript program, such as a dev server, build or tool.|Quitting stops it; anything unsaved in it is lost." ;;
+    [Pp]ython*) print "A Python program.|Quitting stops it; anything unsaved in it is lost." ;;
+    qemu-system*) print "An emulator, often Android's.|Quitting it is like pulling the plug on that emulator." ;;
+    *) print "A program cachewatch doesn't know.|Check what it is first: anything unsaved in it is lost." ;;
+  esac
+}
+
+bg_check() {  # fills issues=("key|title|what it is|is it safe|fix label"), newest state saved for next time
+  issues=()
+  (( BG_CHECK )) || return
+  mkdir -p $STATE
+  local line pid ppid uid cpu et cmd m nm what safe
+
+  # 1. Simulators left on: they can hold the speakers and stop the Mac idling.
+  for line in ${(f)"$(ps -axo pid=,etime=,command= | grep '[l]aunchd_sim')"}; do
+    read -r pid et cmd <<< "$line"
+    m=$(mins $et); (( m >= SIM_MIN )) || continue
+    local udid=${${cmd#*/Devices/}%%/*}
+    nm=$(plutil -extract name raw $HOME/Library/Developer/CoreSimulator/Devices/$udid/device.plist 2>/dev/null)
+    issues+=("sim:$udid|${nm:-iOS} simulator, on for $(dur $m)|A simulator left running can hold your speakers open and stop your Mac from idling.|Safe to shut down: it boots again in seconds.|Shut it down")
+  done
+
+  # 2. Docker Desktop left on: its Linux VM holds gigabytes of memory.
+  pid=$(pgrep -f com.docker.virtualization | head -1)
+  if [[ -n $pid ]]; then
+    m=$(mins ${$(ps -o etime= -p $pid)// /})
+    (( m >= SIM_MIN )) && issues+=("docker:$pid|Docker Desktop, on for $(dur $m)|Docker's Linux VM, holding about $(gb $(ps -o rss= -p $pid)) GB of memory.|Quitting stops any running containers.|Quit Docker Desktop")
+  fi
+
+  # 3. Your own processes stuck at high CPU on two checks in a row (the app you're using is skipped).
+  local front=$(lsappinfo info -only pid "$(lsappinfo front)" 2>/dev/null | grep -oE '[0-9]+' | head -1)
+  local prev=(${(f)"$(cat $STATE/hot 2>/dev/null)"}) hot=()
+  for line in ${(f)"$(ps -axo pid=,ppid=,uid=,%cpu=,etime=,comm=)"}; do
+    read -r pid ppid uid cpu et cmd <<< "$line"
+    (( uid == UID && ${cpu%.*} >= CPU_HOG )) || continue
+    nm=${cmd:t}
+    [[ $pid == $$ || $pid == $front || $ppid == $front || $nm == launchd_sim ]] && continue
+    (( ${BG_IGNORE[(Ie)$nm]} )) && continue
+    hot+=$pid
+    (( ${prev[(Ie)$pid]} )) || continue
+    (( $(mins $et) >= HOG_MIN )) || continue
+    IFS='|' read -r what safe <<< "$(about $nm)"
+    issues+=("cpu:$pid:$nm|$nm, ${cpu%.*}% CPU|$what|$safe|Quit it")
+  done
+  print -rl -- $hot > $STATE/hot
+}
+
+notify_new() {  # one notification per new issue; forgets issues that ended so a new one notifies again
+  local seen=(${(f)"$(cat $STATE/notified 2>/dev/null)"}) keys=() i key title what safe
+  for i in $issues; do
+    IFS='|' read -r key title what safe fix <<< "$i"
+    keys+=$key
+    (( ${seen[(Ie)$key]} )) || notify "Running in the background: $title" "$what Click the ring to decide."
+  done
+  print -rl -- $keys > $STATE/notified
+}
+
 case $1 in
+-h|--help|help) sed -n '2,11p' $0 | cut -c3-; exit ;;
+-v|--version) print "cachewatch $VERSION"; exit ;;
+
+--fix)  # a quick fix clicked in the menu; re-checks the target first so a stale menu can't hit the wrong thing
+  case $2 in
+    sim:*) xcrun simctl shutdown ${2#sim:} ;;
+    docker:*) osascript -e 'quit app "Docker"' ;;
+    cpu:*)
+      pid=${${2#cpu:}%%:*}; nm=${2#cpu:*:}
+      if [[ ${$(ps -o comm= -p $pid 2>/dev/null):t} == $nm ]]; then kill $pid; fi ;;
+  esac
+  exit ;;
+
+--measure) measure; exit ;;  # "Re-measure sizes" in the menu
+
+--bg)
+  bg_check
+  (( $#issues )) || { print "Nothing heavy running in the background."; exit; }
+  for i in $issues; do
+    IFS='|' read -r key title what safe fix <<< "$i"
+    print "• $title\n  $what\n  $safe"
+  done
+  exit ;;
+
 --notify)
+  measure; growth
   (( total < base )) && base=$total  # something shrank by hand: lower the bar
   print $base > $BASE
   msg="Caches grew $(gb $grown) GB since your last sweep. Biggest you can clear: $biggest, $(gb $big_kb) GB"
   print "$(date '+%F %R')  $msg" >> $LOG
-  if (( grown >= GROW_GB * 1048576 )); then
-    if open -Ra SwiftBar 2>/dev/null; then  # a real app with notification permission
-      open -g "swiftbar://notify?plugin=cachewatch&title=Time%20for%20a%20cache%20sweep&body=${msg// /%20}"
-    else
-      osascript -e "display notification \"$msg\" with title \"Time for a cache sweep\""
-    fi
-  fi ;;
+  if (( grown >= GROW_GB * 1048576 )); then notify "Time for a cache sweep" "$msg"; fi ;;
 
 --clean)
+  measure
   offered=0
   for row in $rows; do
     IFS='|' read -r k label cmd dir <<< "$row"
@@ -98,13 +212,30 @@ case $1 in
     read -q "?Clear $label ($(gb $k) GB) with: $cmd ? [y/N] " && { print; eval "$cmd"; } || print
   done
   (( offered )) || print "Nothing over 100 MB to clear. You're tidy."
-  rm -f $BASE  # the ring starts counting fresh growth from here
+  rm -f $BASE $STATE/sizes  # the ring starts counting fresh growth from here
   print; df -h / | awk 'NR==2 {print "Free space now: " $4}' ;;
 
---bar)  # SwiftBar menu: ring icon, then the dropdown. Clicking a row shows it in Finder.
+--bar)  # SwiftBar menu, refreshed every few minutes: cheap background check, sizes from the last measure
+  load; growth; bg_check; notify_new
   frac=$(( grown / (GROW_GB * 1048576.0) )); centre=$(( (big_kb + 524288) / 1048576 ))
-  if (( frac >= 1 )); then print " | image=$($HERE/cachering 1 $centre orange)"
-  else print " | templateImage=$($HERE/cachering $frac $centre)"; fi
+  flag=""; (( $#issues )) && flag="⚠︎"  # a small warning sign beside the ring
+  if (( frac >= 1 )); then print "$flag | image=$($HERE/cachering 1 $centre orange)"
+  else print "$flag | templateImage=$($HERE/cachering $frac $centre)"; fi
+  print -- "---"
+  if (( $#issues )); then
+    print "Running in the background | color=orange"
+    for i in $issues; do
+      IFS='|' read -r key title what safe fix <<< "$i"
+      print "$title | color=orange"
+      print -- "--$what"
+      print -- "--$safe | color=gray"
+      print -- "-----"
+      print -- "--$fix | bash=$HERE/cachewatch param1=--fix param2=$key terminal=false refresh=true"
+      print -- "--Open Activity Monitor | bash=/usr/bin/open param1=-a param2=\"Activity Monitor\" terminal=false"
+    done
+  else
+    print "Nothing heavy running in the background | color=gray"
+  fi
   print -- "---"
   print "Grown $(gb $grown) of $GROW_GB GB since your last sweep"
   [[ -n $biggest ]] && print "Biggest you can clear: $biggest, $(gb $big_kb) GB"
@@ -118,10 +249,10 @@ case $1 in
   done | sort -rn
   print -- "---"
   print "Project folders over 200 MB"
-  projects | while IFS=$'\t' read -r mb dir; do
+  while IFS=$'\t' read -r mb dir; do
     printf -- "--%5.1f GB  %s | font=Menlo size=12 bash=/usr/bin/open param1=-R param2=\"%s\" terminal=false\n" \
       $(( mb / 1024.0 )) "${dir/#$HOME/~}" "$dir"
-  done
+  done < $STATE/projects
   manifests=($HOME/.ollama/models/manifests/*/*/*/*(N.))  # registry/namespace/model/tag
   if (( $#manifests )); then
     print "Ollama models (remove one: ollama rm NAME)"
@@ -134,19 +265,20 @@ case $1 in
   print "Clean now… | bash=$HERE/cachewatch param1=--clean terminal=true"
   print "How to use | bash=$HERE/cacheguide param1=$GROW_GB terminal=false"
   print "History | bash=/usr/bin/open param1=-e param2=$LOG terminal=false"
-  print "Refresh | refresh=true" ;;
+  print "Re-measure sizes | bash=$HERE/cachewatch param1=--measure terminal=false refresh=true" ;;
 
 *)
+  measure; growth
   printf "%8s  %s\n" GB Cache
   for row in $rows; do
     IFS='|' read -r k label cmd <<< "$row"
     printf "%8s  %s%s\n" "$(gb $k)" "$label" "$([[ -z $cmd ]] && print '  (look only)')"
   done | sort -rn
   printf "%8s  total. Grown %s of %s GB since your last sweep.\n\n" "$(gb $total)" "$(gb $grown)" "$GROW_GB"
-  if [[ -n $(projects) ]]; then
+  if [[ -s $STATE/projects ]]; then
     print "Project folders over 200 MB (rebuildable, never cleaned for you):"
-    projects | awk -F'\t' '{printf "%7.1f  %s\n", $1/1024, $2}'
+    awk -F'\t' '{printf "%7.1f  %s\n", $1/1024, $2}' $STATE/projects
     print
   fi
-  print "Clear caches: cachewatch --clean    History: $LOG" ;;
+  print "Clear caches: cachewatch --clean    Background check: cachewatch --bg    History: $LOG" ;;
 esac

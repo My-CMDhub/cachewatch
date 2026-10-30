@@ -13,3 +13,12 @@ PROJECTS=($HOME/Developer $HOME/Projects $HOME/code $HOME/src)
 EXTRA_ITEMS=(
   # "Android SDK system images|$HOME/Library/Android/sdk/system-images|"
 )
+
+# How often the menu re-measures cache sizes (it reads every folder, ~30 s).
+SIZES_EVERY_H=6
+
+# Background check: tells you once when a developer tool is left running.
+BG_CHECK=1          # 0 turns it off
+CPU_HOG=50          # flag your own programs above this % CPU on two checks in a row
+SIM_MIN=30          # flag a simulator or Docker Desktop left on longer than this (minutes)
+BG_IGNORE=()        # names never to flag, e.g. (node "Google Chrome Helper")
